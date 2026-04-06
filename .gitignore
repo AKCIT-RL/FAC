@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Checkpoints and models
+*.pt
+*.pkl
+*.h5
+*.safetensors
+*.npy
+pretrained_bc/
+
+# BC dataset (generated)
+bc_dataset/
+
+# Experiment logs and outputs
+exp/
+output_videos/
+
+# MuJoCo (binaries/assets/scenes — install locally)
+mujoco200_linux/
+mujoco_py_stub/
+mujoco_scene/
+ogbench_scene/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.venv/
+
+# IDE
+.idea/
+.vscode/
+
+# Misc
+MUJOCO_LOG.TXT
+*.mp4
+
+# Secrets
+wandb_apikey.md
+
+# Guides (non-source)
+guide.md
