@@ -1,9 +1,10 @@
+import json
 import os
 import platform
-
-import json
 import random
+import sys
 import time
+import warnings
 
 import jax
 import numpy as np
@@ -16,64 +17,83 @@ from agents import agents
 from envs.env_utils import make_env_and_datasets
 from utils.datasets import Dataset, ReplayBuffer
 from utils.evaluation import evaluate, flatten
-from utils.flax_utils import restore_agent, save_agent, save_only_bcmodel, restore_only_bcmodel
-from utils.log_utils import CsvLogger, get_exp_name, get_flag_dict, get_wandb_video, setup_wandb
+from utils.flax_utils import (
+    restore_agent,
+    restore_only_bcmodel,
+    save_agent,
+    save_only_bcmodel,
+)
+from utils.log_utils import (
+    CsvLogger,
+    get_exp_name,
+    get_flag_dict,
+    get_wandb_video,
+    setup_wandb,
+)
 
-import warnings
-import sys
-warnings.filterwarnings(action='ignore')
+warnings.filterwarnings(action="ignore")
 if not sys.warnoptions:
     warnings.simplefilter("ignore", category=DeprecationWarning)
-os.environ['D4RL_SUPPRESS_IMPORT_ERROR'] = '1'
+os.environ["D4RL_SUPPRESS_IMPORT_ERROR"] = "1"
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_string('run_project', 'Debug', 'Run project.')
-flags.DEFINE_string('run_group', 'Debug', 'Run group.')
-flags.DEFINE_string('run_job', 'Debug', 'Run job.')
-flags.DEFINE_integer('seed', 0, 'Random seed.')
-flags.DEFINE_string('env_name', 'antmaze-umaze-v2', 'Environment (dataset) name.')
-flags.DEFINE_string('save_dir', 'exp/', 'Save directory.')
-flags.DEFINE_string('restore_path', None, 'Restore path.')
-flags.DEFINE_integer('restore_epoch', None, 'Restore epoch.')
+flags.DEFINE_string("run_project", "Debug", "Run project.")
+flags.DEFINE_string("run_group", "Debug", "Run group.")
+flags.DEFINE_string("run_job", "Debug", "Run job.")
+flags.DEFINE_integer("seed", 0, "Random seed.")
+flags.DEFINE_string("env_name", "antmaze-umaze-v2", "Environment (dataset) name.")
+flags.DEFINE_string("save_dir", "exp/", "Save directory.")
+flags.DEFINE_string("restore_path", None, "Restore path.")
+flags.DEFINE_integer("restore_epoch", None, "Restore epoch.")
 
-flags.DEFINE_integer('offline_steps', 1000000, 'Number of offline steps.')
-flags.DEFINE_integer('online_steps', 0, 'Number of online steps.')
-flags.DEFINE_integer('buffer_size', 2000000, 'Replay buffer size.')
-flags.DEFINE_integer('log_interval', 10000, 'Logging interval.')
-flags.DEFINE_integer('eval_interval', 100000, 'Evaluation interval.')
-flags.DEFINE_integer('save_interval', 0, 'Saving interval.')
-flags.DEFINE_integer('epoch_flow_proxy', 250, 'epoch of training BC flow.')
+flags.DEFINE_integer("offline_steps", 1000000, "Number of offline steps.")
+flags.DEFINE_integer("online_steps", 0, "Number of online steps.")
+flags.DEFINE_integer("buffer_size", 2000000, "Replay buffer size.")
+flags.DEFINE_integer("log_interval", 10000, "Logging interval.")
+flags.DEFINE_integer("eval_interval", 100000, "Evaluation interval.")
+flags.DEFINE_integer("save_interval", 0, "Saving interval.")
+flags.DEFINE_integer("epoch_flow_proxy", 250, "epoch of training BC flow.")
 
-flags.DEFINE_integer('eval_episodes', 50, 'Number of evaluation episodes.')
-flags.DEFINE_integer('video_episodes', 0, 'Number of video episodes for each task.')
-flags.DEFINE_integer('video_frame_skip', 3, 'Frame skip for videos.')
+flags.DEFINE_integer("eval_episodes", 50, "Number of evaluation episodes.")
+flags.DEFINE_integer("video_episodes", 0, "Number of video episodes for each task.")
+flags.DEFINE_integer("video_frame_skip", 3, "Frame skip for videos.")
 
-flags.DEFINE_float('p_aug', None, 'Probability of applying image augmentation.')
-flags.DEFINE_integer('frame_stack', None, 'Number of frames to stack.')
-flags.DEFINE_integer('balanced_sampling', 0, 'Whether to use balanced sampling for online fine-tuning.')
+flags.DEFINE_float("p_aug", None, "Probability of applying image augmentation.")
+flags.DEFINE_integer("frame_stack", None, "Number of frames to stack.")
+flags.DEFINE_integer(
+    "balanced_sampling", 0, "Whether to use balanced sampling for online fine-tuning."
+)
 
-config_flags.DEFINE_config_file('agent', 'agents/fac.py', lock_config=False)
+config_flags.DEFINE_config_file("agent", "agents/fac.py", lock_config=False)
 
 
 def main(_):
     # Set up logger.
     exp_name = get_exp_name(FLAGS.seed)
-    setup_wandb(entity='your_wandb_name', project=FLAGS.run_project, name=exp_name, access_key='your_wandb_personal_key')
+    setup_wandb(entity="jpaguiar399", project=FLAGS.run_project, name=exp_name)
 
-    FLAGS.save_dir = os.path.join(FLAGS.save_dir, FLAGS.run_project, FLAGS.run_group, exp_name)
+    FLAGS.save_dir = os.path.join(
+        FLAGS.save_dir, FLAGS.run_project, FLAGS.run_group, exp_name
+    )
     os.makedirs(FLAGS.save_dir, exist_ok=True)
     flag_dict = get_flag_dict()
-    with open(os.path.join(FLAGS.save_dir, 'flags.json'), 'w') as f:
+    with open(os.path.join(FLAGS.save_dir, "flags.json"), "w") as f:
         json.dump(flag_dict, f)
 
     # Make environment and datasets.
     config = FLAGS.agent
-    env, eval_env, train_dataset, val_dataset = make_env_and_datasets(FLAGS.env_name, frame_stack=FLAGS.frame_stack)
+    env, eval_env, train_dataset, val_dataset = make_env_and_datasets(
+        FLAGS.env_name, frame_stack=FLAGS.frame_stack
+    )
     if FLAGS.video_episodes > 0:
-        assert 'singletask' in FLAGS.env_name, 'Rendering is currently only supported for OGBench environments.'
+        assert "singletask" in FLAGS.env_name, (
+            "Rendering is currently only supported for OGBench environments."
+        )
     if FLAGS.online_steps > 0:
-        assert 'visual' not in FLAGS.env_name, 'Online fine-tuning is currently not supported for visual environments.'
+        assert "visual" not in FLAGS.env_name, (
+            "Online fine-tuning is currently not supported for visual environments."
+        )
 
     # Initialize agent.
     random.seed(FLAGS.seed)
@@ -96,27 +116,27 @@ def main(_):
         if dataset is not None:
             dataset.p_aug = FLAGS.p_aug
             dataset.frame_stack = FLAGS.frame_stack
-            if config['agent_name'] == 'rebrac':
+            if config["agent_name"] == "rebrac":
                 dataset.return_next_actions = True
 
     # Create agent.
     example_batch = train_dataset.sample(1)
 
-    agent_class = agents[config['agent_name']]
+    agent_class = agents[config["agent_name"]]
     agent = agent_class.create(
         FLAGS.seed,
-        example_batch['observations'],
-        example_batch['actions'],
+        example_batch["observations"],
+        example_batch["actions"],
         config,
     )
-    
+
     # Restore agent.
     if FLAGS.restore_path is not None:
         agent = restore_agent(agent, FLAGS.restore_path, FLAGS.restore_epoch)
 
     # Train agent.
-    train_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'train.csv'))
-    eval_logger = CsvLogger(os.path.join(FLAGS.save_dir, 'eval.csv'))
+    train_logger = CsvLogger(os.path.join(FLAGS.save_dir, "train.csv"))
+    eval_logger = CsvLogger(os.path.join(FLAGS.save_dir, "eval.csv"))
     first_time = time.time()
     last_time = time.time()
 
@@ -127,47 +147,76 @@ def main(_):
 
     # --- Train flow behavior proxy (BC flow policy) -----------------
     # For pixel-based tasks in the OGBench, large mini-batch size often cause unexpected XLA issues.
-    if 'visual' not in FLAGS.env_name:
-        bc_batch_size = int(config['batch_size'] * (1 if train_dataset.size < 100000 else 4 if train_dataset.size < 500000 else 16))
+    if "visual" not in FLAGS.env_name:
+        bc_batch_size = int(
+            config["batch_size"]
+            * (
+                1
+                if train_dataset.size < 100000
+                else 4
+                if train_dataset.size < 500000
+                else 16
+            )
+        )
     else:
-        bc_batch_size = int(config['batch_size'])
-    
-    if os.path.isdir(os.path.join(os.getcwd(), 'pretrained_bc', f'{FLAGS.env_name}_seed_{FLAGS.seed}')):
-        print(f'Found pretrained BC model, loading and skipping BC flow policy training.')
-        agent = restore_only_bcmodel(agent, 'pretrained_bc', str(FLAGS.env_name), str(FLAGS.seed))
+        bc_batch_size = int(config["batch_size"])
+
+    if os.path.isdir(
+        os.path.join(
+            os.getcwd(), "pretrained_bc", f"{FLAGS.env_name}_seed_{FLAGS.seed}"
+        )
+    ):
+        print(
+            f"Found pretrained BC model, loading and skipping BC flow policy training."
+        )
+        agent = restore_only_bcmodel(
+            agent, "pretrained_bc", str(FLAGS.env_name), str(FLAGS.seed)
+        )
     else:
         iters_bc_train = (train_dataset.size + bc_batch_size - 1) // bc_batch_size
-        for _ in tqdm.tqdm(range(1, (FLAGS.epoch_flow_proxy * iters_bc_train) + 1), smoothing=0.1, dynamic_ncols=True, desc='Train BC'):
+        for _ in tqdm.tqdm(
+            range(1, (FLAGS.epoch_flow_proxy * iters_bc_train) + 1),
+            smoothing=0.1,
+            dynamic_ncols=True,
+            desc="Train BC",
+        ):
             batch = train_dataset.sample(bc_batch_size)
-            agent, update_info = agent.update(batch, mode='train_bc')
+            agent, update_info = agent.update(batch, mode="train_bc")
 
-        save_only_bcmodel(agent, 'pretrained_bc', str(FLAGS.env_name), str(FLAGS.seed))
+        save_only_bcmodel(agent, "pretrained_bc", str(FLAGS.env_name), str(FLAGS.seed))
     # ------------------------------------------------------------------
 
     # --- Compute log-density on the offline dataset --------------------
     train_dataset.compute_and_attach_estimated_logp(
         agent=agent,
-        method=config['logp_method'],
+        method=config["logp_method"],
         batch_size=bc_batch_size,
     )
     if val_dataset is not None:
         val_dataset.compute_and_attach_estimated_logp(
             agent=agent,
-            method=config['logp_method'],
+            method=config["logp_method"],
             batch_size=bc_batch_size,
         )
     if replay_buffer is not train_dataset:
-        if 'estimated_logp' not in replay_buffer._dict:
-            length = getattr(replay_buffer, 'max_size', replay_buffer.size)
-            replay_buffer._dict['estimated_logp'] = np.full((length,), np.nan, dtype=np.float32)
+        if "estimated_logp" not in replay_buffer._dict:
+            length = getattr(replay_buffer, "max_size", replay_buffer.size)
+            replay_buffer._dict["estimated_logp"] = np.full(
+                (length,), np.nan, dtype=np.float32
+            )
     # -------------------------------------------------------------------
 
     # --- Train Actor-Crtic (AC) ----------------------------------------
-    for i in tqdm.tqdm(range(1, FLAGS.offline_steps + FLAGS.online_steps + 1), smoothing=0.1, dynamic_ncols=True, desc='Train AC'):
+    for i in tqdm.tqdm(
+        range(1, FLAGS.offline_steps + FLAGS.online_steps + 1),
+        smoothing=0.1,
+        dynamic_ncols=True,
+        desc="Train AC",
+    ):
         if i <= FLAGS.offline_steps:
             # Offline RL.
-            batch = train_dataset.sample(config['batch_size'])
-            agent, update_info = agent.update(batch, mode='train_ac')
+            batch = train_dataset.sample(config["batch_size"])
+            agent, update_info = agent.update(batch, mode="train_ac")
 
         else:
             # Online fine-tuning.
@@ -183,8 +232,10 @@ def main(_):
             next_ob, reward, terminated, truncated, info = env.step(action.copy())
             done = terminated or truncated
 
-            if 'antmaze' in FLAGS.env_name and (
-                'diverse' in FLAGS.env_name or 'play' in FLAGS.env_name or 'umaze' in FLAGS.env_name
+            if "antmaze" in FLAGS.env_name and (
+                "diverse" in FLAGS.env_name
+                or "play" in FLAGS.env_name
+                or "umaze" in FLAGS.env_name
             ):
                 # Adjust reward for D4RL antmaze.
                 reward = reward - 1.0
@@ -197,40 +248,53 @@ def main(_):
                     terminals=float(done),
                     masks=1.0 - terminated,
                     next_observations=next_ob,
-                    estimated_logp=np.nan,      # dummy value during online finetuning
+                    estimated_logp=np.nan,  # dummy value during online finetuning
                     estimated_logp_min=np.nan,
                 )
             )
             ob = next_ob
 
             if done:
-                expl_metrics = {f'exploration/{k}': np.mean(v) for k, v in flatten(info).items()}
+                expl_metrics = {
+                    f"exploration/{k}": np.mean(v) for k, v in flatten(info).items()
+                }
 
             step += 1
 
             # Update agent.
             if FLAGS.balanced_sampling:
                 # Half-and-half sampling from the training dataset and the replay buffer.
-                dataset_batch = train_dataset.sample(config['batch_size'] // 2)
-                replay_batch = replay_buffer.sample(config['batch_size'] // 2)
-                batch = {k: np.concatenate([dataset_batch[k], replay_batch[k]], axis=0) for k in dataset_batch}
+                dataset_batch = train_dataset.sample(config["batch_size"] // 2)
+                replay_batch = replay_buffer.sample(config["batch_size"] // 2)
+                batch = {
+                    k: np.concatenate([dataset_batch[k], replay_batch[k]], axis=0)
+                    for k in dataset_batch
+                }
             else:
-                batch = train_dataset.sample(config['batch_size'])
-            
+                batch = train_dataset.sample(config["batch_size"])
+
             # update flow behavior proxy model
-            agent, bc_info = agent.update(batch, mode='train_bc')
+            agent, bc_info = agent.update(batch, mode="train_bc")
             # update flow actor-critic model
-            agent, update_info = agent.update(batch, mode='train_ac', use_cp=True, online_finetuning=True)
+            agent, update_info = agent.update(
+                batch, mode="train_ac", use_cp=True, online_finetuning=True
+            )
 
         # Log metrics.
         if i % FLAGS.log_interval == 0:
-            train_metrics = {f'training/{k}': v for k, v in update_info.items()}
+            train_metrics = {f"training/{k}": v for k, v in update_info.items()}
             if val_dataset is not None:
-                val_batch = val_dataset.sample(config['batch_size'])
-                _, val_info = agent.total_loss(val_batch, grad_params=None, mode='train_ac')
-                train_metrics.update({f'validation/{k}': v for k, v in val_info.items()})
-            train_metrics['time/epoch_time'] = (time.time() - last_time) / FLAGS.log_interval
-            train_metrics['time/total_time'] = time.time() - first_time
+                val_batch = val_dataset.sample(config["batch_size"])
+                _, val_info = agent.total_loss(
+                    val_batch, grad_params=None, mode="train_ac"
+                )
+                train_metrics.update(
+                    {f"validation/{k}": v for k, v in val_info.items()}
+                )
+            train_metrics["time/epoch_time"] = (
+                time.time() - last_time
+            ) / FLAGS.log_interval
+            train_metrics["time/total_time"] = time.time() - first_time
             train_metrics.update(expl_metrics)
             last_time = time.time()
             wandb.log(train_metrics, step=i)
@@ -250,32 +314,44 @@ def main(_):
             )
             renders.extend(cur_renders)
             for k, v in eval_info.items():
-                eval_metrics[f'evaluation/{k}'] = v
+                eval_metrics[f"evaluation/{k}"] = v
 
             if FLAGS.video_episodes > 0:
                 video = get_wandb_video(renders=renders)
-                eval_metrics['video'] = video
+                eval_metrics["video"] = video
 
-            eval_metrics['record/transitions'] = i
-            if '-singletask' in FLAGS.env_name:
+            eval_metrics["record/transitions"] = i
+            if "-singletask" in FLAGS.env_name:
                 if i <= FLAGS.offline_steps:
-                    eval_metrics['record/offline_score'] = eval_metrics['evaluation/success']*100.0
-                    
+                    eval_metrics["record/offline_score"] = (
+                        eval_metrics["evaluation/success"] * 100.0
+                    )
+
                 if i >= FLAGS.offline_steps and FLAGS.online_steps != 0:
-                    eval_metrics['record/online_score'] = eval_metrics['evaluation/success']*100.0
+                    eval_metrics["record/online_score"] = (
+                        eval_metrics["evaluation/success"] * 100.0
+                    )
 
             else:
                 if i <= FLAGS.offline_steps:
-                    eval_metrics['record/offline_score'] = eval_metrics['evaluation/episode.normalized_return']
-                    
+                    eval_metrics["record/offline_score"] = eval_metrics[
+                        "evaluation/episode.normalized_return"
+                    ]
+
                 if i >= FLAGS.offline_steps and FLAGS.online_steps != 0:
-                    eval_metrics['record/online_score'] = eval_metrics['evaluation/episode.normalized_return']
+                    eval_metrics["record/online_score"] = eval_metrics[
+                        "evaluation/episode.normalized_return"
+                    ]
 
             wandb.log(eval_metrics, step=i)
             eval_logger.log(eval_metrics, step=i)
 
         # Save agent.
-        if FLAGS.save_interval != 0 and i % FLAGS.save_interval == 0 and i <= FLAGS.offline_steps:
+        if (
+            FLAGS.save_interval != 0
+            and i % FLAGS.save_interval == 0
+            and i <= FLAGS.offline_steps
+        ):
             save_agent(agent, FLAGS.save_dir, i)
     # -------------------------------------------------------------------
 
@@ -283,5 +359,5 @@ def main(_):
     eval_logger.close()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     app.run(main)
